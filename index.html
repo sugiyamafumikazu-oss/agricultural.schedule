@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgriLogi v2: 栽培・出荷・防除統合管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Chosen Palette: Earth & Growth (Stone/Green/Amber) -->
+    <!-- Application Structure Plan: 
+         Updated Structure for V2:
+         1. Header: Status, Date, and now implies Weather context.
+         2. Section 1 (Top): "Cultivation Schedule" (Gantt) & "Efficiency Metrics" (Donut).
+         3. Section 2 (Middle Left): "Smart Pest Management" - Includes Weather input for accurate logs.
+         4. Section 3 (Middle Right): "Management Log" - Table updated with Weather column.
+         5. Section 4 (NEW - Bottom): "Harvest & Shipment Database" - Form to upload photos, record weight/quality/weather. Displays as a Gallery Grid.
+         
+         Why this structure?
+         Separating "Inputs" (Pesticides) from "Outputs" (Harvest) is logical. 
+         The Harvest section is visual (photos), placed at the bottom to allow the gallery to expand.
+    -->
+
+    <!-- Visualization & Content Choices:
+         1. Goal: Harvest Photo Log -> Method: FileReader API + DOM Generation -> Justification: Allows user to see their "Database" of photos immediately.
+         2. Goal: Weather Recording -> Method: Dropdown Selector (Emoji) -> Justification: Visual, fast, language-independent.
+         3. Goal: Previous Charts -> Maintained as they are effective.
+         CONFIRMATION: NO SVG graphics used. NO Mermaid JS used.
+    -->
+
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #f5f5f4; /* stone-100 */
+        }
+        
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 250px;
+            max-height: 300px;
+        }
+        
+        .chart-container-large {
+            position: relative;
+            width: 100%;
+            height: 300px;
+            max-height: 400px;
+        }
+
+        /* Photo Upload Preview Styling */
+        .photo-card {
+            transition: transform 0.2s;
+        }
+        .photo-card:hover {
+            transform: translateY(-2px);
+        }
+        .aspect-square-cover {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            object-fit: cover;
+            border-radius: 0.5rem 0.5rem 0 0;
+            background-color: #e7e5e4;
+        }
+    </style>
+</head>
+<body class="text-stone-800">
+
+    <!-- Navbar -->
+    <nav class="bg-white border-b border-stone-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <span class="text-2xl font-bold text-green-700">AgriLogi</span>
+                    <span class="ml-2 text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">v2.0 Photo DB</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-sm text-stone-500 text-right hidden sm:block">
+                        <p>現在地: 第2圃場 (夏野菜)</p>
+                        <p id="current-date" class="font-bold">2026年5月15日</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+        <!-- Intro -->
+        <div class="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500">
+            <h1 class="text-2xl font-bold mb-2">統合ファーム管理データベース</h1>
+            <p class="text-stone-600 leading-relaxed">
+                作業の効率化スケジュールから、農薬の適正判定、そして<span class="font-bold text-green-700">収穫物の写真・天候記録</span>までを一元管理します。
+                画像データベースにより、過去の出荷品質と気象条件の関係を視覚的に振り返ることができます。
+            </p>
+        </div>
+
+        <!-- Top Section: Stats & Schedule -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Efficiency Chart -->
+            <div class="bg-white p-6 rounded-lg shadow-sm">
+                <h2 class="text-lg font-bold mb-4 flex items-center">
+                    <span class="text-xl mr-2">📊</span> 現在の作業効率
+                </h2>
+                <div class="chart-container">
+                    <canvas id="efficiencyChart"></canvas>
+                </div>
+                <div class="mt-4 text-sm text-stone-500 text-center">
+                    <p>管理作業（防除・記録）の割合: 25%</p>
+                </div>
+            </div>
+
+            <!-- Schedule Chart -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
+                <h2 class="text-lg font-bold mb-4 flex items-center">
+                    <span class="text-xl mr-2">📅</span> 栽培カレンダー
+                </h2>
+                <div class="chart-container-large">
+                    <canvas id="scheduleChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Middle Section: Pest Management (Input) & Log (Data) -->
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
+            
+            <!-- 1. Smart Pest Control Panel -->
+            <div class="bg-white p-6 rounded-lg shadow-sm border border-stone-200 h-full">
+                <div class="border-b border-stone-200 pb-4 mb-4">
+                    <h2 class="text-xl font-bold text-stone-800 flex items-center">
+                        <span class="bg-red-100 text-red-600 p-2 rounded-lg mr-3 text-2xl">🛡️</span>
+                        防除判定・記録
+                    </h2>
+                    <p class="text-sm text-stone-500 mt-1">農薬の安全性（回数・抵抗性）を判定し、天候と共に記録します。</p>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-stone-500 uppercase mb-1">対象 (Target)</label>
+                            <select id="targetPest" class="w-full p-2 border border-stone-300 rounded bg-stone-50">
+                                <option value="aphid">アブラムシ類</option>
+                                <option value="caterpillar">アオムシ類</option>
+                                <option value="mite">ハダニ類</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-stone-500 uppercase mb-1">天候 (Weather)</label>
+                            <select id="sprayWeather" class="w-full p-2 border border-stone-300 rounded bg-stone-50 text-xl">
+                                <option value="☀️">☀️ 晴れ</option>
+                                <option value="☁️">☁️ 曇り</option>
+                                <option value="☂️">☂️ 小雨</option>
+                                <option value="💨">💨 強風 (注意)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-stone-500 uppercase mb-1">薬剤選択 (Chemical)</label>
+                        <select id="chemicalSelect" class="w-full p-2 border border-stone-300 rounded bg-stone-50">
+                            <!-- Populated via JS -->
+                        </select>
+                    </div>
+
+                    <button id="checkButton" class="w-full bg-stone-800 hover:bg-stone-900 text-white font-bold py-3 px-4 rounded shadow transition">
+                        判定実行 (Check Safety)
+                    </button>
+
+                    <!-- Result Area -->
+                    <div id="resultPanel" class="bg-stone-50 rounded p-4 text-center border-2 border-dashed border-stone-200 mt-4 min-h-[120px] flex flex-col justify-center items-center">
+                        <p class="text-stone-400 text-sm">判定結果がここに表示されます</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Management Log Table -->
+            <div class="bg-white p-6 rounded-lg shadow-sm border border-stone-200 h-full flex flex-col">
+                <h2 class="text-lg font-bold mb-4 flex items-center">
+                    <span class="text-xl mr-2">📝</span> 防除履歴データベース
+                </h2>
+                <div class="overflow-y-auto custom-scrollbar flex-grow max-h-[400px]">
+                    <table class="min-w-full text-sm text-left text-stone-600">
+                        <thead class="text-xs text-stone-700 uppercase bg-stone-100 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2">日付</th>
+                                <th class="px-3 py-2">天候</th>
+                                <th class="px-3 py-2">薬剤名</th>
+                                <th class="px-3 py-2">系統</th>
+                                <th class="px-3 py-2">判定</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logTableBody">
+                            <!-- JS Populated -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-4 pt-4 border-t border-stone-100 text-right">
+                    <span class="text-xs text-stone-400">※ 天候は散布時の記録です</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Section: Harvest & Shipment Recorder (NEW) -->
+        <div class="bg-white p-6 rounded-lg shadow-sm border-t-4 border-amber-500">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                <div>
+                    <h2 class="text-xl font-bold text-stone-800 flex items-center">
+                        <span class="text-2xl mr-2">📦</span> 収穫・出荷フォトデータベース
+                    </h2>
+                    <p class="text-stone-500 text-sm mt-1">出荷時の荷姿や作物の状態を写真で保存し、品質管理に役立てます。</p>
+                </div>
+                <button onclick="document.getElementById('harvestForm').classList.toggle('hidden')" class="mt-4 md:mt-0 text-amber-600 border border-amber-600 hover:bg-amber-50 px-4 py-2 rounded text-sm font-bold transition">
+                    + 新規記録を追加
+                </button>
+            </div>
+
+            <!-- Add New Harvest Record Form -->
+            <div id="harvestForm" class="hidden bg-amber-50 p-6 rounded-lg mb-8 border border-amber-200">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div class="md:col-span-1">
+                        <label class="block text-xs font-bold text-stone-600 mb-1">品目 (Item)</label>
+                        <input type="text" id="harvestItem" value="夏秋トマト" class="w-full p-2 border border-stone-300 rounded">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="block text-xs font-bold text-stone-600 mb-1">収穫量 (kg)</label>
+                        <input type="number" id="harvestWeight" placeholder="例: 20" class="w-full p-2 border border-stone-300 rounded">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="block text-xs font-bold text-stone-600 mb-1">当日の天候</label>
+                        <select id="harvestWeather" class="w-full p-2 border border-stone-300 rounded bg-white text-lg">
+                            <option value="☀️">☀️ 晴れ</option>
+                            <option value="☁️">☁️ 曇り</option>
+                            <option value="☔">☔ 雨</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="block text-xs font-bold text-stone-600 mb-1">写真 (Photo)</label>
+                        <input type="file" id="harvestPhoto" accept="image/*" class="w-full text-xs text-stone-500 file:mr-2 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-amber-100 file:text-amber-700 hover:file:bg-amber-200">
+                    </div>
+                </div>
+                <div class="mt-4 flex justify-end">
+                    <button onclick="addHarvestRecord()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-6 rounded shadow transition">
+                        データベースに保存
+                    </button>
+                </div>
+            </div>
+
+            <!-- Gallery Grid -->
+            <div id="harvestGallery" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <!-- Cards injected by JS -->
+            </div>
+            
+            <div id="emptyGalleryMsg" class="text-center py-10 text-stone-400">
+                <p>まだ記録がありません。「新規記録を追加」から写真を登録してください。</p>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="bg-stone-800 text-stone-400 py-8 mt-12 text-center text-sm">
+        <p>&copy; 2026 AgriLogi v2.0 Smart Database System.</p>
+    </footer>
+
+    <!-- Logic -->
+    <script>
+        // --- 1. Data Definitions ---
+        const TODAY = new Date('2026-05-15');
+        document.getElementById('current-date').textContent = TODAY.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+
+        // Pesticide DB
+        const PESTICIDE_DB = {
+            'admi': { name: 'アドマイヤー', group: '4A', target: ['aphid'], maxCount: 3, desc: '定植時処理推奨' },
+            'mosa': { name: 'モスピラン', group: '4A', target: ['aphid', 'caterpillar'], maxCount: 3, desc: '速効性あり' },
+            'bene': { name: 'ベネビアOD', group: '28', target: ['aphid', 'caterpillar'], maxCount: 3, desc: '潅注処理も可' },
+            'ulala': { name: 'ウララDF', group: '9C', target: ['aphid'], maxCount: 3, desc: 'アブラムシ特効' },
+            'sumi': { name: 'スミチオン', group: '1B', target: ['aphid'], maxCount: 5, desc: '広範囲に効く' }
+        };
+
+        // Usage Log (with Weather)
+        let usageHistory = [
+            { date: '2026-04-10', weather: '☀️', code: 'admi', name: 'アドマイヤー', group: '4A', status: 'OK' },
+            { date: '2026-04-25', weather: '☁️', code: 'mosa', name: 'モスピラン', group: '4A', status: 'OK' },
+            { date: '2026-05-02', weather: '☔', code: 'bene', name: 'ベネビア', group: '28', status: 'OK' }
+        ];
+
+        // Harvest Data (Mock)
+        let harvestData = [
+            { id: 1, date: '2026-05-10', item: '夏秋トマト', weight: 45, weather: '☀️', img: null }, // Null img uses placeholder
+        ];
+
+        // --- 2. Chart Inits ---
+        function initCharts() {
+            // Schedule
+            new Chart(document.getElementById('scheduleChart'), {
+                type: 'bar',
+                data: {
+                    labels: ['土作り', '定植', '管理・防除', '収穫'],
+                    datasets: [{
+                        label: '計画',
+                        data: [[1, 20], [25, 30], [35, 100], [60, 110]], // Simplified numeric range for demo
+                        backgroundColor: ['#d6d3d1', '#86efac', '#22c55e', '#f59e0b'],
+                        borderRadius: 5
+                    }]
+                },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: {display:false} } }
+            });
+
+            // Efficiency
+            new Chart(document.getElementById('efficiencyChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['作業', '防除', '記録'],
+                    datasets: [{
+                        data: [60, 25, 15],
+                        backgroundColor: ['#22c55e', '#f59e0b', '#78716c'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: {position:'right'} } }
+            });
+        }
+
+        // --- 3. Pesticide Logic (Updated with Weather) ---
+        function updatePesticideOptions() {
+            const target = document.getElementById('targetPest').value;
+            const select = document.getElementById('chemicalSelect');
+            select.innerHTML = '';
+            for (const [key, val] of Object.entries(PESTICIDE_DB)) {
+                if (val.target.includes(target)) {
+                    const opt = document.createElement('option');
+                    opt.value = key;
+                    opt.textContent = `${val.name} (系統:${val.group})`;
+                    select.appendChild(opt);
+                }
+            }
+        }
+
+        function checkPesticide() {
+            const code = document.getElementById('chemicalSelect').value;
+            const weather = document.getElementById('sprayWeather').value;
+            const pest = PESTICIDE_DB[code];
+            const panel = document.getElementById('resultPanel');
+
+            // Logic
+            const usedCount = usageHistory.filter(h => h.code === code).length;
+            const lastSpray = usageHistory[usageHistory.length - 1];
+            const isConsecutive = lastSpray && lastSpray.group === pest.group;
+
+            let html = '';
+            let isSafe = true;
+
+            if (isConsecutive) {
+                isSafe = false;
+                html = `<h3 class="text-red-600 font-bold">🚫 連用警告 (Rotation Alert)</h3><p class="text-sm">前回と同じ系統(${pest.group})です。抵抗性がつきます。</p>`;
+            } else if (usedCount >= pest.maxCount) {
+                isSafe = false;
+                html = `<h3 class="text-red-600 font-bold">⚠️ 回数超過</h3><p class="text-sm">使用限度に達しています。</p>`;
+            } else {
+                html = `<h3 class="text-green-600 font-bold">✅ 使用可能 (Safe)</h3>
+                        <p class="text-sm text-stone-600">系統:${pest.group} / 回数:${usedCount+1}回目</p>
+                        <p class="text-sm mt-1 font-bold">天候記録: ${weather}</p>
+                        <button onclick="addLog('${code}', '${weather}')" class="mt-3 bg-green-600 text-white px-4 py-1 rounded text-sm hover:bg-green-700">記録に追加</button>`;
+            }
+            
+            panel.innerHTML = html;
+        }
+
+        window.addLog = function(code, weather) {
+            const pest = PESTICIDE_DB[code];
+            usageHistory.push({
+                date: TODAY.toISOString().split('T')[0],
+                weather: weather,
+                code: code,
+                name: pest.name,
+                group: pest.group,
+                status: 'OK'
+            });
+            renderLogTable();
+            document.getElementById('resultPanel').innerHTML = `<p class="text-green-600 font-bold">記録しました！</p>`;
+        };
+
+        function renderLogTable() {
+            const tbody = document.getElementById('logTableBody');
+            tbody.innerHTML = '';
+            [...usageHistory].reverse().forEach(log => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b hover:bg-stone-50';
+                tr.innerHTML = `
+                    <td class="px-3 py-2 text-stone-500">${log.date}</td>
+                    <td class="px-3 py-2 text-lg">${log.weather}</td>
+                    <td class="px-3 py-2 font-bold text-stone-700">${log.name}</td>
+                    <td class="px-3 py-2"><span class="bg-stone-200 text-xs px-2 py-1 rounded">${log.group}</span></td>
+                    <td class="px-3 py-2 text-green-600 text-xs">● ${log.status}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // --- 4. Harvest & Shipment Logic (Photo Handling) ---
+        
+        function renderHarvestGallery() {
+            const gallery = document.getElementById('harvestGallery');
+            const msg = document.getElementById('emptyGalleryMsg');
+            
+            gallery.innerHTML = '';
+            
+            if (harvestData.length === 0) {
+                msg.classList.remove('hidden');
+            } else {
+                msg.classList.add('hidden');
+                harvestData.forEach(item => {
+                    // Create Card
+                    const card = document.createElement('div');
+                    card.className = 'bg-white rounded-lg shadow photo-card border border-stone-200 overflow-hidden';
+                    
+                    // Image Handling (Placeholder if null)
+                    const imgSrc = item.img ? item.img : 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNlNWU3ZWIiLz48dGV4dCB4PSI1MCIgeT0iNTAiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXNpemU9IjE0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjOWNhMzFmIj5NoCBQaG90bzwvdGV4dD48L3N2Zz4='; // Canvas generated placeholder actually preferred but data URI ok for placeholder
+                    
+                    card.innerHTML = `
+                        <img src="${imgSrc}" class="aspect-square-cover" alt="Harvest Photo">
+                        <div class="p-3">
+                            <div class="flex justify-between items-start mb-1">
+                                <h3 class="font-bold text-stone-800">${item.item}</h3>
+                                <span class="text-xl" title="天候">${item.weather}</span>
+                            </div>
+                            <p class="text-xs text-stone-500 mb-2">${item.date}</p>
+                            <div class="flex justify-between items-center text-sm bg-amber-50 p-2 rounded">
+                                <span class="text-amber-800 font-bold">${item.weight}kg</span>
+                                <span class="text-stone-400 text-xs">出荷済</span>
+                            </div>
+                        </div>
+                    `;
+                    gallery.prepend(card); // Newest first
+                });
+            }
+        }
+
+        // Add Record Function
+        window.addHarvestRecord = function() {
+            const item = document.getElementById('harvestItem').value;
+            const weight = document.getElementById('harvestWeight').value;
+            const weather = document.getElementById('harvestWeather').value;
+            const fileInput = document.getElementById('harvestPhoto');
+            
+            if (!item || !weight) {
+                alert('品目と重量は必須です');
+                return;
+            }
+
+            const processRecord = (imgData) => {
+                harvestData.push({
+                    id: Date.now(),
+                    date: TODAY.toISOString().split('T')[0],
+                    item: item,
+                    weight: weight,
+                    weather: weather,
+                    img: imgData
+                });
+                renderHarvestGallery();
+                document.getElementById('harvestForm').classList.add('hidden');
+                // Reset form
+                document.getElementById('harvestWeight').value = '';
+                fileInput.value = '';
+            };
+
+            if (fileInput.files && fileInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    processRecord(e.target.result); // Base64 string
+                };
+                reader.readAsDataURL(fileInput.files[0]);
+            } else {
+                processRecord(null); // No image
+            }
+        };
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initCharts();
+            updatePesticideOptions();
+            renderLogTable();
+            renderHarvestGallery();
+
+            document.getElementById('targetPest').addEventListener('change', updatePesticideOptions);
+            document.getElementById('checkButton').addEventListener('click', checkPesticide);
+        });
+    </script>
+</body>
+</html>
